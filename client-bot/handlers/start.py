@@ -15,6 +15,7 @@ async def cmd_start(message: Message) -> None:
     await message.answer(
         "🤝 Assalomu alaykum!\n\n"
         "Bu bot NDKTU ayol xodimlari va talabalari uchun mo'ljallangan.\n\n"
+        "Талаба қизларга нисбатан шилқимлик, тазйиқ ва зўравонлик ҳолатларини олдини олиш учун ташкил этилди (https://www.lex.uz/docs/8070193).\n\n"
         "Agar siz:\n"
         "• Jinsiy ta'qib yoki zo'ravonlikka duch kelgan bo'lsangiz\n"
         "• Psixologik bosim yoki kamsitishga uchragan bo'lsangiz\n"
