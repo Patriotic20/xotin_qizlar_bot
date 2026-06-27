@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: xotin_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - bot_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: xotin_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - bot_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  db-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    container_name: xotin_db_migrate
+    restart: "no"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bot_network
+
+  client-bot:
+    build:
+      context: ./client-bot
+      dockerfile: Dockerfile
+    container_name: xotin_client_bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      BOT_TOKEN: ${CLIENT_BOT_TOKEN}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - bot_network
+
+  worker-bot:
+    build:
+      context: ./worker-bot
+      dockerfile: Dockerfile
+    container_name: xotin_worker_bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      BOT_TOKEN: ${WORKER_BOT_TOKEN}
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - bot_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: xotin_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bot_network
+
+networks:
+  bot_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
