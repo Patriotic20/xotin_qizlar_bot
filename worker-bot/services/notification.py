@@ -1,4 +1,5 @@
 import asyncio
+from datetime import timedelta
 
 import redis.asyncio as aioredis
 from aiogram import Bot
@@ -7,20 +8,25 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from models.statement import Statement
 from services.statement_service import get_active_operators, get_statement
-from utils.keyboards import action_keyboard
+from utils.keyboards import reply_keyboard
 
 
 def format_statement(stmt: Statement) -> str:
+    name_parts = [stmt.first_name, stmt.last_name]
+    name = " ".join(p for p in name_parts if p)
+    name_line = f"👤 {name}\n" if name else ""
+    display_time = stmt.created_at + timedelta(hours=5)
     return (
         f"🆘 Yangi murojaat #{stmt.id}\n\n"
+        f"{name_line}"
         f"📝 {stmt.description}\n\n"
-        f"🕐 {stmt.created_at.strftime('%d.%m.%Y %H:%M')}"
+        f"🕐 {display_time.strftime('%d.%m.%Y %H:%M')} (Toshkent)"
     )
 
 
 async def _notify_operators(bot: Bot, stmt: Statement, operators: list) -> None:
     text = format_statement(stmt)
-    kb = action_keyboard(stmt.id)
+    kb = reply_keyboard(stmt.id)
 
     for op in operators:
         try:

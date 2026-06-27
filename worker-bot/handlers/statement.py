@@ -1,35 +1,57 @@
+import json
+
+import redis.asyncio as aioredis
 from aiogram import Router
-from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.statement_service import update_statement_status
-from utils.keyboards import StatementAction
+from config import settings
+from services.statement_service import get_statement
+from utils.keyboards import ReplyAction
 
 router = Router()
 
 
-@router.callback_query(StatementAction.filter())
-async def handle_action(
+class ReplyForm(StatesGroup):
+    reply_text = State()
+
+
+@router.callback_query(ReplyAction.filter())
+async def ask_reply(
     callback: CallbackQuery,
-    callback_data: StatementAction,
+    callback_data: ReplyAction,
+    state: FSMContext,
+) -> None:
+    await state.update_data(statement_id=callback_data.statement_id)
+    await state.set_state(ReplyForm.reply_text)
+    await callback.message.answer("✍️ Javobingizni yozing:")
+    await callback.answer()
+
+
+@router.message(ReplyForm.reply_text)
+async def send_reply(
+    message: Message,
+    state: FSMContext,
     session: AsyncSession,
 ) -> None:
-    stmt = await update_statement_status(
-        session=session,
-        statement_id=callback_data.statement_id,
-        status=callback_data.action,
-        operator_id=callback.from_user.id,
-    )
+    data = await state.get_data()
+    statement_id = data["statement_id"]
+    await state.clear()
 
-    if stmt is None:
-        await callback.answer("Ariza topilmadi!", show_alert=True)
+    stmt = await get_statement(session, statement_id)
+    if stmt is None or stmt.client_tg_id is None:
+        await message.answer("Murojaat topilmadi yoki mijoz anonim.")
         return
 
-    status_label = "✅ Qabul qilindi" if callback_data.action == "accept" else "❌ Rad etildi"
-    operator_name = callback.from_user.full_name
+    redis = aioredis.from_url(settings.redis_url)
+    payload = json.dumps({
+        "client_tg_id": stmt.client_tg_id,
+        "statement_id": statement_id,
+        "reply": message.text,
+    })
+    await redis.publish(settings.redis_reply_channel, payload)
+    await redis.aclose()
 
-    await callback.message.edit_text(
-        callback.message.text
-        + f"\n\n{status_label}\n👷 Operator: {operator_name}"
-    )
-    await callback.answer(status_label)
+    await message.answer(f"✅ #{statement_id} Javob yuborildi.")

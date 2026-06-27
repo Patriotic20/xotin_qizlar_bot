@@ -2,7 +2,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message  # CallbackQuery used for file skip
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -13,16 +13,17 @@ router = Router()
 
 
 class StatementForm(StatesGroup):
+    first_name = State()
+    last_name = State()
     description = State()
-    file = State()
 
 
 @router.message(F.text == "Murojaat yuborish")
 async def start_statement(message: Message, state: FSMContext) -> None:
-    await state.set_state(StatementForm.description)
+    await state.set_state(StatementForm.first_name)
     await message.answer(
-        "✍️ Nima bo'lganini batafsil yozing.\n\n"
-        "Bekor qilish uchun /cancel yozing."
+        "Ismingizni kiriting (ixtiyoriy):",
+        reply_markup=skip_keyboard("skip_first_name"),
     )
 
 
@@ -32,70 +33,60 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
     await message.answer("Murojaat bekor qilindi.")
 
 
-@router.message(StatementForm.description)
-async def process_description(message: Message, state: FSMContext) -> None:
-    await state.update_data(description=message.text)
-    await state.set_state(StatementForm.file)
+# --- first_name ---
+
+@router.message(StatementForm.first_name)
+async def process_first_name(message: Message, state: FSMContext) -> None:
+    await state.update_data(first_name=message.text)
+    await state.set_state(StatementForm.last_name)
     await message.answer(
-        "📎 Dalil sifatida foto, video yoki hujjat biriktiring (ixtiyoriy).\n\n"
-        "Bekor qilish uchun /cancel yozing.",
-        reply_markup=skip_keyboard(),
+        "Familiyangizni kiriting (ixtiyoriy):",
+        reply_markup=skip_keyboard("skip_last_name"),
     )
 
 
-async def _submit(
-    session: AsyncSession,
-    state: FSMContext,
-    file_id: str | None,
-    file_type: str | None,
-) -> int:
+@router.callback_query(StatementForm.first_name, F.data == "skip_first_name")
+async def skip_first_name(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(first_name=None)
+    await state.set_state(StatementForm.last_name)
+    await callback.message.edit_text(
+        "Familiyangizni kiriting (ixtiyoriy):",
+        reply_markup=skip_keyboard("skip_last_name"),
+    )
+    await callback.answer()
+
+
+# --- last_name ---
+
+@router.message(StatementForm.last_name)
+async def process_last_name(message: Message, state: FSMContext) -> None:
+    await state.update_data(last_name=message.text)
+    await state.set_state(StatementForm.description)
+    await message.answer("✍️ Nima bo'lganini batafsil yozing:")
+
+
+@router.callback_query(StatementForm.last_name, F.data == "skip_last_name")
+async def skip_last_name(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(last_name=None)
+    await state.set_state(StatementForm.description)
+    await callback.message.edit_text("✍️ Nima bo'lganini batafsil yozing:")
+    await callback.answer()
+
+
+# --- description → submit ---
+
+@router.message(StatementForm.description)
+async def process_description(message: Message, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     await state.clear()
     stmt = await create_statement(
         session=session,
-        data=data,
-        file_id=file_id,
-        file_type=file_type,
+        data={**data, "description": message.text},
         redis_url=settings.redis_url,
         channel=settings.redis_channel,
+        client_tg_id=message.from_user.id,
     )
-    return stmt.id
-
-
-@router.message(StatementForm.file, F.photo)
-async def process_photo(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    stmt_id = await _submit(session, state, message.photo[-1].file_id, "photo")
     await message.answer(
-        f"✅ #{stmt_id} Murojaat qabul qilindi.\n\n"
+        f"✅ #{stmt.id} Murojaat qabul qilindi.\n\n"
         "Rahmat. Administratorlar uni tez orada ko'rib chiqishadi."
     )
-
-
-@router.message(StatementForm.file, F.video)
-async def process_video(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    stmt_id = await _submit(session, state, message.video.file_id, "video")
-    await message.answer(
-        f"✅ #{stmt_id} Murojaat qabul qilindi.\n\n"
-        "Rahmat. Administratorlar uni tez orada ko'rib chiqishadi."
-    )
-
-
-@router.message(StatementForm.file, F.document)
-async def process_document(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    stmt_id = await _submit(session, state, message.document.file_id, "document")
-    await message.answer(
-        f"✅ #{stmt_id} Murojaat qabul qilindi.\n\n"
-        "Rahmat. Administratorlar uni tez orada ko'rib chiqishadi."
-    )
-
-
-@router.callback_query(StatementForm.file, F.data == "skip_file")
-async def process_skip_file(
-    callback: CallbackQuery, state: FSMContext, session: AsyncSession
-) -> None:
-    stmt_id = await _submit(session, state, None, None)
-    await callback.message.edit_text(
-        f"✅ #{stmt_id} Murojaat qabul qilindi.\n\n"
-        "Rahmat. Administratorlar uni tez orada ko'rib chiqishadi."
-    )
-    await callback.answer()
